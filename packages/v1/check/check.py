@@ -4,12 +4,13 @@ Real monitoring check.
 POST /api/my/v1/check {id}  or {url}
 
 - Looks up the monitor by id (or uses url directly).
-- Performs a real HTTP GET against the URL (stdlib urllib).
+- Performs a real HTTP GET against the URL (stdlib urllib / WebFetch).
 - Measures response time in milliseconds.
-- Detects online/offline from the response.
+- Detects online/offline from the response and captures an error message.
 - Persists the result to PostgreSQL.
 - Caches the latest status in Redis.
-- Returns {ok, id, url, status, responseTime, timestamp}.
+- Appends a history record to MongoDB.
+- Returns {ok, id, url, status, responseTime, timestamp, error}.
 """
 
 import json
@@ -33,6 +34,7 @@ def request_data(args):
         "POSTGRES_URL",
         "REDIS_URL",
         "REDIS_PREFIX",
+        "MONGODB_URI",
         "__ow_method",
         "__ow_headers",
         "__ow_path",
@@ -52,9 +54,13 @@ def is_valid_url(value):
 
 
 def fetch_url(url, timeout=10):
-    """Perform a real HTTP GET and return (online, response_time_ms, status_code)."""
+    """Perform a real HTTP GET.
+
+    Returns (online, response_time_ms, status_code, error_message).
+    """
     start = time.monotonic()
     status_code = None
+    error = None
     try:
         req = urllib.request.Request(
             url,
@@ -63,20 +69,23 @@ def fetch_url(url, timeout=10):
         )
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             status_code = resp.getcode()
-            # Drain a small amount of the body so the response is fully acknowledged.
+            # Drain a small amount of the body so the response is acknowledged.
             resp.read(1024)
         elapsed_ms = int((time.monotonic() - start) * 1000)
         online = 200 <= (status_code or 0) < 400
-        return online, elapsed_ms, status_code
+        if not online:
+            error = f"HTTP {status_code}"
+        return online, elapsed_ms, status_code, error
     except urllib.error.HTTPError as e:
         elapsed_ms = int((time.monotonic() - start) * 1000)
         status_code = e.code
-        # Non-2xx/3xx HTTP responses mean the endpoint is reachable but not healthy.
         online = 200 <= status_code < 400
-        return online, elapsed_ms, status_code
-    except Exception:
+        error = f"HTTP {e.code}"
+        return online, elapsed_ms, status_code, error
+    except Exception as e:
         elapsed_ms = int((time.monotonic() - start) * 1000)
-        return False, elapsed_ms, status_code
+        error = (str(e) or e.__class__.__name__)[:300]
+        return False, elapsed_ms, status_code, error
 
 
 def redis_key(ctx, name):
@@ -113,7 +122,18 @@ def cache_result(ctx, monitor_id, payload):
     try:
         redis.set(key, json.dumps(payload), ex=3600)
     except Exception:
-        # Caching is best-effort; the persisted DB row remains authoritative.
+        pass
+
+
+def insert_history(ctx, record):
+    db = getattr(ctx, "MONGODB", None)
+    if db is None:
+        return
+    try:
+        db["check_history"].insert_one(record)
+    except Exception:
+        # History is best-effort relative to the live status result; the
+        # PostgreSQL row and Redis cache remain authoritative for current state.
         pass
 
 
@@ -147,7 +167,7 @@ def main(args, ctx=None):
     if not is_valid_url(url):
         return {"ok": False, "error": "A valid http or https URL is required."}
 
-    online, response_time_ms, _status_code = fetch_url(url)
+    online, response_time_ms, _status_code, error = fetch_url(url)
     status = "online" if online else "offline"
     timestamp = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
@@ -163,6 +183,17 @@ def main(args, ctx=None):
                 "timestamp": timestamp,
             },
         )
+        insert_history(
+            ctx,
+            {
+                "monitor_id": monitor_id,
+                "timestamp": timestamp,
+                "status": status,
+                "response_time": response_time_ms,
+                "error": error,
+                "url": url,
+            },
+        )
 
     return {
         "ok": True,
@@ -171,4 +202,5 @@ def main(args, ctx=None):
         "status": status,
         "responseTime": response_time_ms,
         "timestamp": timestamp,
+        "error": error,
     }

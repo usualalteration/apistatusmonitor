@@ -1,5 +1,6 @@
 import { Activity, CheckCircle2, XCircle, TrendingUp } from "lucide-react";
 import { useMonitors } from "@/contexts/MonitorsContext";
+import RecentFailures from "@/components/dashboard/RecentFailures";
 
 interface StatCardProps {
   label: string;
@@ -74,16 +75,19 @@ const Dashboard = () => {
         />
       </div>
 
-      <div className="rounded-xl border bg-card p-6 shadow-sm">
-        <div className="flex items-center gap-2">
-          <TrendingUp className="h-5 w-5 text-muted-foreground" />
-          <h2 className="text-base font-semibold">Uptime summary</h2>
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+        <div className="rounded-xl border bg-card p-6 shadow-sm">
+          <div className="flex items-center gap-2">
+            <TrendingUp className="h-5 w-5 text-muted-foreground" />
+            <h2 className="text-base font-semibold">Uptime summary</h2>
+          </div>
+          <p className="mt-3 text-sm text-muted-foreground">
+            {total === 0
+              ? "No monitors yet. Create one from the Monitors page to start tracking its status."
+              : "Run a check from a monitor card to record a real status. Latest results are cached in Redis, persisted to PostgreSQL, and logged to MongoDB history."}
+          </p>
         </div>
-        <p className="mt-3 text-sm text-muted-foreground">
-          {total === 0
-            ? "No monitors yet. Create one from the Monitors page to start tracking its status."
-            : "Run a check from a monitor card to record a real status. Latest results are cached in Redis and persisted to PostgreSQL."}
-        </p>
+        <RecentFailures />
       </div>
     </div>
   );

@@ -7,6 +7,7 @@ import AppLayout from "@/components/layout/AppLayout";
 import { MonitorsProvider } from "@/contexts/MonitorsContext";
 import Dashboard from "./pages/Dashboard";
 import Monitors from "./pages/Monitors";
+import MonitorDetails from "./pages/MonitorDetails";
 import Settings from "./pages/Settings";
 import NotFound from "./pages/NotFound";
 
@@ -24,6 +25,7 @@ const App = () => (
               <Route path="/" element={<Navigate to="/dashboard" replace />} />
               <Route path="/dashboard" element={<Dashboard />} />
               <Route path="/monitors" element={<Monitors />} />
+              <Route path="/monitors/:id" element={<MonitorDetails />} />
               <Route path="/settings" element={<Settings />} />
             </Route>
             {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}

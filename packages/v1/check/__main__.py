@@ -6,6 +6,15 @@ import types, os, check
 
 builder = []
 ## build-context ##
+#--param MONGODB_URI "$MONGODB_URI"
+from pymongo import MongoClient
+def init_mongodb(args, ctx):
+  uri = args.get("MONGODB_URI", os.getenv("MONGODB_URI"))
+  if not uri:
+    raise RuntimeError("MONGODB_URI is not configured for this action")
+  ctx.MONGODB_CLIENT = MongoClient(uri)
+  ctx.MONGODB = ctx.MONGODB_CLIENT.get_default_database()
+builder.append(init_mongodb)
 #--param REDIS_URL "$REDIS_URL"
 #--param REDIS_PREFIX "$REDIS_PREFIX"
 import redis

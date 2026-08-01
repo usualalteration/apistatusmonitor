@@ -1,4 +1,5 @@
-import { Globe, Trash2, HelpCircle, Loader2, Zap } from "lucide-react";
+import { Globe, Trash2, HelpCircle, Loader2, Zap, ExternalLink } from "lucide-react";
+import { Link } from "react-router-dom";
 import { cn } from "@/lib/utils";
 import type { Monitor } from "@/types/monitor";
 
@@ -96,7 +97,14 @@ const MonitorCard = ({
         )}
       </div>
 
-      <div className="mt-4 flex justify-end">
+      <div className="mt-4 flex items-center justify-between">
+        <Link
+          to={`/monitors/${monitor.id}`}
+          className="inline-flex items-center gap-1.5 text-xs font-medium text-primary hover:underline"
+        >
+          <ExternalLink className="h-3.5 w-3.5" />
+          View details
+        </Link>
         <button
           type="button"
           onClick={() => onCheck(monitor.id)}
