@@ -81,13 +81,3 @@ Two idempotent setup actions prepare the stores — `setup/database` creates the
 `monitors` table, `setup/history` creates the index on the `check_history`
 collection that makes per-monitor and recent-failure lookups fast.
 
-## Getting started
-
-```bash
-npm install
-npm run dev
-```
-
-The backend needs PostgreSQL, Redis and MongoDB configured; run the two setup
-actions once before the first check. Then create a monitor, press Check Now, and
-watch its history build up.
