@@ -15,6 +15,12 @@ import {
   subscribeMonitoringSettings,
   type MonitoringSettings,
 } from "@/lib/monitoringSettings";
+import {
+  apiFetchJSON,
+  ApiPendingError,
+  JSON_HEADERS,
+  sleep,
+} from "@/lib/api";
 
 interface CheckResult {
   ok: boolean;
@@ -98,15 +104,14 @@ const normalizeResult = (raw: unknown): CheckResult | null => {
 const runCheckRequest = async (
   id: number,
 ): Promise<CheckResult | null> => {
-  const response = await fetch("/api/my/v1/check", {
+  const raw = await apiFetchJSON("/api/my/v1/check", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: JSON_HEADERS,
     body: JSON.stringify({ id }),
   });
-  const raw = await response.json();
   const result = normalizeResult(raw);
   if (!result) {
-    throw new Error(errorMessage(raw, `Check failed: ${response.status}`));
+    throw new Error(errorMessage(raw, "Check failed"));
   }
   return result;
 };
@@ -164,11 +169,10 @@ export const MonitorsProvider = ({
     setLoading(true);
     setLoadError(null);
     try {
-      const response = await fetch("/api/my/v1/monitors", { method: "GET" });
-      const raw = await response.json();
+      const raw = await apiFetchJSON("/api/my/v1/monitors", { method: "GET" });
       const obj = unwrap(raw);
       if (!obj || obj.ok === false) {
-        throw new Error(errorMessage(raw, `Failed to load monitors: ${response.status}`));
+        throw new Error(errorMessage(raw, "Failed to load monitors"));
       }
       const list = Array.isArray(obj.monitors) ? obj.monitors : [];
       const normalized = list
@@ -188,15 +192,33 @@ export const MonitorsProvider = ({
 
   const addMonitor = useCallback(
     async ({ name, url }: { name: string; url: string }) => {
-      const response = await fetch("/api/my/v1/monitors", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: name.trim(), url: url.trim() }),
-      });
-      const raw = await response.json();
+      const trimmedName = name.trim();
+      const trimmedUrl = url.trim();
+      let raw: unknown;
+      try {
+        raw = await apiFetchJSON("/api/my/v1/monitors", {
+          method: "POST",
+          headers: JSON_HEADERS,
+          body: JSON.stringify({ name: trimmedName, url: trimmedUrl }),
+          // No retries: a repeated insert could duplicate the monitor.
+          retries: 0,
+        });
+      } catch (e) {
+        if (e instanceof ApiPendingError) {
+          // The insert may still complete in the background on a cold
+          // backend; give it a moment, then reconcile from the server.
+          await sleep(12000);
+          await loadMonitors();
+          const landed = monitorsRef.current.some(
+            (m) => m.name === trimmedName && m.url === trimmedUrl,
+          );
+          if (landed) return;
+        }
+        throw e;
+      }
       const obj = unwrap(raw);
       if (!obj || obj.ok === false || !obj.monitor) {
-        throw new Error(errorMessage(raw, `Failed to create monitor: ${response.status}`));
+        throw new Error(errorMessage(raw, "Failed to create monitor"));
       }
       const monitor = normalizeMonitor(obj.monitor as Record<string, unknown>);
       if (!monitor) {
@@ -204,20 +226,35 @@ export const MonitorsProvider = ({
       }
       setMonitors((prev) => [monitor, ...prev]);
     },
-    [],
+    [loadMonitors],
   );
 
   const deleteMonitor = useCallback(async (id: number) => {
-    const response = await fetch(`/api/my/v1/monitors/${id}`, {
-      method: "DELETE",
-    });
-    const raw = await response.json();
+    let raw: unknown;
+    try {
+      raw = await apiFetchJSON(`/api/my/v1/monitors/${id}`, {
+        method: "DELETE",
+        // No retries: a second delete of the same id would report
+        // "Monitor not found" even though the first one succeeded.
+        retries: 0,
+      });
+    } catch (e) {
+      if (e instanceof ApiPendingError) {
+        // The delete may still complete in the background on a cold
+        // backend; give it a moment, then reconcile from the server.
+        await sleep(12000);
+        await loadMonitors();
+        const stillThere = monitorsRef.current.some((m) => m.id === id);
+        if (!stillThere) return;
+      }
+      throw e;
+    }
     const obj = unwrap(raw);
     if (!obj || obj.ok === false) {
-      throw new Error(errorMessage(raw, `Failed to delete monitor: ${response.status}`));
+      throw new Error(errorMessage(raw, "Failed to delete monitor"));
     }
     setMonitors((prev) => prev.filter((m) => m.id !== id));
-  }, []);
+  }, [loadMonitors]);
 
   const checkMonitor = useCallback(async (id: number) => {
     setCheckingId(id);

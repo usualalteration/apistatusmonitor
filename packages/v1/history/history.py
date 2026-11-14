@@ -70,33 +70,44 @@ def main(args, ctx=None):
         return {"ok": False, "error": "MongoDB not configured"}
 
     db = ctx.MONGODB
-    data = request_data(args)
-    method = (args.get("__ow_method") or args.get("method") or "GET").upper()
-    if method != "GET":
-        return {"ok": False, "error": f"Method {method} not supported"}
-
-    recent = data.get("recent")
     try:
-        limit = int(data.get("limit") or (5 if recent == "failures" else 50))
-    except (TypeError, ValueError):
-        limit = 5 if recent == "failures" else 50
+        data = request_data(args)
+        method = (args.get("__ow_method") or args.get("method") or "GET").upper()
+        if method != "GET":
+            return {"ok": False, "error": f"Method {method} not supported"}
 
-    if recent == "failures":
-        return {"ok": True, "failures": get_recent_failures(db, limit)}
+        recent = data.get("recent")
+        try:
+            limit = int(data.get("limit") or (5 if recent == "failures" else 50))
+        except (TypeError, ValueError):
+            limit = 5 if recent == "failures" else 50
 
-    monitor_id = data.get("monitor_id") or data.get("monitorId") or data.get("id")
-    if monitor_id in (None, ""):
+        if recent == "failures":
+            return {"ok": True, "failures": get_recent_failures(db, limit)}
+
+        monitor_id = data.get("monitor_id") or data.get("monitorId") or data.get("id")
+        if monitor_id in (None, ""):
+            return {
+                "ok": False,
+                "error": "monitor_id is required, or use recent=failures",
+            }
+        try:
+            monitor_id_int = int(monitor_id)
+        except (TypeError, ValueError):
+            return {"ok": False, "error": "monitor_id must be an integer"}
+
         return {
-            "ok": False,
-            "error": "monitor_id is required, or use recent=failures",
+            "ok": True,
+            "monitorId": monitor_id_int,
+            "history": get_monitor_history(db, monitor_id_int, limit),
         }
-    try:
-        monitor_id_int = int(monitor_id)
-    except (TypeError, ValueError):
-        return {"ok": False, "error": "monitor_id must be an integer"}
-
-    return {
-        "ok": True,
-        "monitorId": monitor_id_int,
-        "history": get_monitor_history(db, monitor_id_int, limit),
-    }
+    finally:
+        # The generated wrapper opens a fresh MongoClient per invocation and
+        # never closes it; release it so server slots are not held until
+        # the container is garbage collected.
+        try:
+            client = getattr(ctx, "MONGODB_CLIENT", None)
+            if client is not None:
+                client.close()
+        except Exception:
+            pass

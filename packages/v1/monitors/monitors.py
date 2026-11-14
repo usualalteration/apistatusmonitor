@@ -132,11 +132,20 @@ def main(args, ctx=None):
     method = request_method(args)
     data = request_data(args)
 
-    if method == "GET":
-        return list_monitors(conn)
-    if method == "POST":
-        return create_monitor(conn, data)
-    if method == "DELETE":
-        return delete_monitor(conn, request_route_id(args, data))
+    try:
+        if method == "GET":
+            return list_monitors(conn)
+        if method == "POST":
+            return create_monitor(conn, data)
+        if method == "DELETE":
+            return delete_monitor(conn, request_route_id(args, data))
 
-    return {"ok": False, "error": f"Method {method} not supported"}
+        return {"ok": False, "error": f"Method {method} not supported"}
+    finally:
+        # The generated wrapper opens a fresh connection per invocation and
+        # never closes it; release it so server slots are not held until
+        # the container is garbage collected.
+        try:
+            conn.close()
+        except Exception:
+            pass

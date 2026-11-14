@@ -137,70 +137,90 @@ def insert_history(ctx, record):
         pass
 
 
+def close_resources(ctx):
+    """Release the per-invocation service connections created by the wrapper.
+
+    The generated wrapper rebuilds ctx (PostgreSQL, MongoDB, Redis) on every
+    invocation and does not close them. Without this, every check leaves a
+    server-side connection open until the container is garbage collected,
+    which eventually stalls activations.
+    """
+    for name in ("POSTGRESQL", "MONGODB_CLIENT", "REDIS"):
+        try:
+            client = getattr(ctx, name, None)
+            if client is not None:
+                client.close()
+        except Exception:
+            pass
+
+
 def main(args, ctx=None):
     if not ctx or not hasattr(ctx, "POSTGRESQL"):
         return {"ok": False, "error": "Database not configured"}
 
-    conn = ctx.POSTGRESQL
-    data = request_data(args)
+    try:
+        conn = ctx.POSTGRESQL
+        data = request_data(args)
 
-    monitor_id = data.get("id") or data.get("monitor_id") or data.get("monitorId")
-    url = data.get("url") or data.get("monitor_url") or data.get("monitorUrl")
+        monitor_id = data.get("id") or data.get("monitor_id") or data.get("monitorId")
+        url = data.get("url") or data.get("monitor_url") or data.get("monitorUrl")
 
-    monitor = None
-    if monitor_id not in (None, ""):
-        try:
-            monitor_id_int = int(monitor_id)
-        except (TypeError, ValueError):
-            return {"ok": False, "error": "Monitor id must be an integer."}
-        monitor = lookup_monitor(conn, monitor_id_int)
-        if not monitor:
-            return {"ok": False, "error": "Monitor not found."}
-        url = monitor["url"]
-        monitor_id = monitor["id"]
-    else:
-        monitor_id = None
+        monitor = None
+        if monitor_id not in (None, ""):
+            try:
+                monitor_id_int = int(monitor_id)
+            except (TypeError, ValueError):
+                return {"ok": False, "error": "Monitor id must be an integer."}
+            monitor = lookup_monitor(conn, monitor_id_int)
+            if not monitor:
+                return {"ok": False, "error": "Monitor not found."}
+            url = monitor["url"]
+            monitor_id = monitor["id"]
+        else:
+            monitor_id = None
 
-    if not url or not str(url).strip():
-        return {"ok": False, "error": "Monitor URL is required."}
-    url = str(url).strip()
-    if not is_valid_url(url):
-        return {"ok": False, "error": "A valid http or https URL is required."}
+        if not url or not str(url).strip():
+            return {"ok": False, "error": "Monitor URL is required."}
+        url = str(url).strip()
+        if not is_valid_url(url):
+            return {"ok": False, "error": "A valid http or https URL is required."}
 
-    online, response_time_ms, _status_code, error = fetch_url(url)
-    status = "online" if online else "offline"
-    timestamp = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+        online, response_time_ms, _status_code, error = fetch_url(url)
+        status = "online" if online else "offline"
+        timestamp = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
-    if monitor_id is not None:
-        ts_db = datetime.now(timezone.utc)
-        persist_result(conn, monitor_id, status, response_time_ms, ts_db)
-        cache_result(
-            ctx,
-            monitor_id,
-            {
-                "status": status,
-                "responseTime": response_time_ms,
-                "timestamp": timestamp,
-            },
-        )
-        insert_history(
-            ctx,
-            {
-                "monitor_id": monitor_id,
-                "timestamp": timestamp,
-                "status": status,
-                "response_time": response_time_ms,
-                "error": error,
-                "url": url,
-            },
-        )
+        if monitor_id is not None:
+            ts_db = datetime.now(timezone.utc)
+            persist_result(conn, monitor_id, status, response_time_ms, ts_db)
+            cache_result(
+                ctx,
+                monitor_id,
+                {
+                    "status": status,
+                    "responseTime": response_time_ms,
+                    "timestamp": timestamp,
+                },
+            )
+            insert_history(
+                ctx,
+                {
+                    "monitor_id": monitor_id,
+                    "timestamp": timestamp,
+                    "status": status,
+                    "response_time": response_time_ms,
+                    "error": error,
+                    "url": url,
+                },
+            )
 
-    return {
-        "ok": True,
-        "id": monitor_id,
-        "url": url,
-        "status": status,
-        "responseTime": response_time_ms,
-        "timestamp": timestamp,
-        "error": error,
-    }
+        return {
+            "ok": True,
+            "id": monitor_id,
+            "url": url,
+            "status": status,
+            "responseTime": response_time_ms,
+            "timestamp": timestamp,
+            "error": error,
+        }
+    finally:
+        close_resources(ctx)

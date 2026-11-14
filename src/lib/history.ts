@@ -1,3 +1,5 @@
+import { apiFetchJSON } from "@/lib/api";
+
 export interface HistoryRecord {
   monitorId: number;
   timestamp: string;
@@ -26,13 +28,12 @@ export async function fetchMonitorHistory(
   monitorId: number,
   limit = 50,
 ): Promise<HistoryRecord[]> {
-  const res = await fetch(
+  const raw = await apiFetchJSON(
     `/api/my/v1/history?monitor_id=${monitorId}&limit=${limit}`,
   );
-  const raw = await res.json();
   const data = unwrap(raw);
   if (!data || data.ok === false) {
-    throw new Error(errorMessage(raw, `Failed to load history: ${res.status}`));
+    throw new Error(errorMessage(raw, "Failed to load history"));
   }
   const list = data.history;
   return Array.isArray(list) ? (list as HistoryRecord[]) : [];
@@ -41,13 +42,12 @@ export async function fetchMonitorHistory(
 export async function fetchRecentFailures(
   limit = 5,
 ): Promise<HistoryRecord[]> {
-  const res = await fetch(`/api/my/v1/history?recent=failures&limit=${limit}`);
-  const raw = await res.json();
+  const raw = await apiFetchJSON(
+    `/api/my/v1/history?recent=failures&limit=${limit}`,
+  );
   const data = unwrap(raw);
   if (!data || data.ok === false) {
-    throw new Error(
-      errorMessage(raw, `Failed to load recent failures: ${res.status}`),
-    );
+    throw new Error(errorMessage(raw, "Failed to load failures"));
   }
   const list = data.failures;
   return Array.isArray(list) ? (list as HistoryRecord[]) : [];
