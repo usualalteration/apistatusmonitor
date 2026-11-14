@@ -70,7 +70,7 @@ const MonitorDetails = () => {
 
   useEffect(() => {
     loadHistory();
-  }, [loadHistory]);
+  }, [loadHistory, monitor?.lastCheck]);
 
   const handleCheck = async () => {
     await checkMonitor(monitorId);

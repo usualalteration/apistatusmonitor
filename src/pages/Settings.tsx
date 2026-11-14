@@ -1,11 +1,19 @@
-import { useState } from "react";
-import { Bell, Globe, Moon, Sun } from "lucide-react";
+import { useState, useSyncExternalStore } from "react";
+import { Bell, Globe, Moon, RefreshCw, Sun } from "lucide-react";
 import { cn } from "@/lib/utils";
+import {
+  getMonitoringSettings,
+  subscribeMonitoringSettings,
+  updateMonitoringSettings,
+} from "@/lib/monitoringSettings";
 
 const Settings = () => {
   const [notifications, setNotifications] = useState(true);
   const [theme, setTheme] = useState<"light" | "dark">("light");
-  const [checkInterval, setCheckInterval] = useState("60");
+  const monitoring = useSyncExternalStore(
+    subscribeMonitoringSettings,
+    getMonitoringSettings,
+  );
 
   return (
     <div className="space-y-6">
@@ -17,6 +25,44 @@ const Settings = () => {
       </div>
 
       <div className="divide-y rounded-xl border bg-card shadow-sm">
+        {/* Automatic monitoring */}
+        <div className="flex items-center justify-between p-5">
+          <div className="flex items-start gap-3">
+            <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary/10 text-primary">
+              <RefreshCw className="h-4.5 w-4.5" />
+            </span>
+            <div>
+              <p className="text-sm font-medium">Automatic monitoring</p>
+              <p className="text-xs text-muted-foreground">
+                Check every monitored website on the interval below, while
+                the app is open.
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={monitoring.autoCheckEnabled}
+            aria-label="Toggle automatic monitoring"
+            onClick={() =>
+              updateMonitoringSettings({
+                autoCheckEnabled: !monitoring.autoCheckEnabled,
+              })
+            }
+            className={cn(
+              "relative inline-flex h-6 w-11 shrink-0 rounded-full transition-colors",
+              monitoring.autoCheckEnabled ? "bg-primary" : "bg-muted",
+            )}
+          >
+            <span
+              className={cn(
+                "inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform",
+                monitoring.autoCheckEnabled ? "translate-x-5" : "translate-x-0.5",
+              )}
+            />
+          </button>
+        </div>
+
         {/* Check interval */}
         <div className="flex flex-col gap-3 p-5 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-start gap-3">
@@ -26,15 +72,19 @@ const Settings = () => {
             <div>
               <p className="text-sm font-medium">Check interval</p>
               <p className="text-xs text-muted-foreground">
-                How often monitors are polled (seconds).
+                How often each website is checked automatically.
               </p>
             </div>
           </div>
           <select
             id="check-interval"
             name="check-interval"
-            value={checkInterval}
-            onChange={(e) => setCheckInterval(e.target.value)}
+            value={String(monitoring.checkIntervalSeconds)}
+            onChange={(e) =>
+              updateMonitoringSettings({
+                checkIntervalSeconds: Number(e.target.value),
+              })
+            }
             className="rounded-md border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
           >
             <option value="30">30s</option>
@@ -125,8 +175,11 @@ const Settings = () => {
 
       <div className="rounded-xl border bg-muted/40 p-5">
         <p className="text-sm text-muted-foreground">
-          These settings are stored locally for now. A backend will be added in
-          a later step to persist preferences.
+          Automatic monitoring preferences are saved in this browser and apply
+          whenever the app is open: every monitored website is polled on the
+          interval above and each result is recorded by the backend
+          (PostgreSQL status, Redis cache, MongoDB history). Notifications and
+          appearance are local preferences.
         </p>
       </div>
     </div>

@@ -4,10 +4,17 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
+  useSyncExternalStore,
   type ReactNode,
 } from "react";
 import type { Monitor, MonitorStatus } from "@/types/monitor";
+import {
+  getMonitoringSettings,
+  subscribeMonitoringSettings,
+  type MonitoringSettings,
+} from "@/lib/monitoringSettings";
 
 interface CheckResult {
   ok: boolean;
@@ -22,9 +29,13 @@ interface MonitorsContextValue {
   loading: boolean;
   loadError: string | null;
   checkingId: number | null;
+  autoChecking: boolean;
+  lastAutoCheckAt: string | null;
+  monitoringSettings: MonitoringSettings;
   addMonitor: (input: { name: string; url: string }) => Promise<void>;
   deleteMonitor: (id: number) => Promise<void>;
   checkMonitor: (id: number) => Promise<void>;
+  refreshMonitors: () => Promise<void>;
 }
 
 const MonitorsContext = createContext<MonitorsContextValue | undefined>(
@@ -83,11 +94,71 @@ const normalizeResult = (raw: unknown): CheckResult | null => {
   };
 };
 
-export const MonitorsProvider = ({ children }: { children: ReactNode }) => {
+/** Call the backend check action for one monitor and normalize the reply. */
+const runCheckRequest = async (
+  id: number,
+): Promise<CheckResult | null> => {
+  const response = await fetch("/api/my/v1/check", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ id }),
+  });
+  const raw = await response.json();
+  const result = normalizeResult(raw);
+  if (!result) {
+    throw new Error(errorMessage(raw, `Check failed: ${response.status}`));
+  }
+  return result;
+};
+
+export const MonitorsProvider = ({
+  children,
+}: {
+  children: ReactNode;
+}) => {
   const [monitors, setMonitors] = useState<Monitor[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [checkingId, setCheckingId] = useState<number | null>(null);
+  const [autoChecking, setAutoChecking] = useState(false);
+  const [lastAutoCheckAt, setLastAutoCheckAt] = useState<string | null>(null);
+
+  const monitoringSettings = useSyncExternalStore(
+    subscribeMonitoringSettings,
+    getMonitoringSettings,
+  );
+
+  // Refs keep the polling loop decoupled from re-renders.
+  const monitorsRef = useRef<Monitor[]>([]);
+  const checkingIdRef = useRef<number | null>(null);
+  const autoRunInFlightRef = useRef(false);
+
+  useEffect(() => {
+    monitorsRef.current = monitors;
+  }, [monitors]);
+
+  useEffect(() => {
+    checkingIdRef.current = checkingId;
+  }, [checkingId]);
+
+  const applyResult = useCallback(
+    (requestedId: number, result: CheckResult) => {
+      const id = result.id ?? requestedId;
+      setMonitors((prev) =>
+        prev.map((m) =>
+          m.id === id
+            ? {
+                ...m,
+                status: result.status,
+                responseTime: result.responseTime,
+                lastCheck: result.timestamp || m.lastCheck,
+              }
+            : m,
+        ),
+      );
+    },
+    [],
+  );
 
   const loadMonitors = useCallback(async () => {
     setLoading(true);
@@ -151,32 +222,63 @@ export const MonitorsProvider = ({ children }: { children: ReactNode }) => {
   const checkMonitor = useCallback(async (id: number) => {
     setCheckingId(id);
     try {
-      const response = await fetch("/api/my/v1/check", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id }),
-      });
-      const raw = await response.json();
-      const result = normalizeResult(raw);
-      if (!result) {
-        throw new Error(errorMessage(raw, `Check failed: ${response.status}`));
+      const result = await runCheckRequest(id);
+      if (result) {
+        applyResult(id, result);
       }
-      setMonitors((prev) =>
-        prev.map((m) =>
-          m.id === id
-            ? {
-                ...m,
-                status: result.status,
-                responseTime: result.responseTime,
-                lastCheck: result.timestamp,
-              }
-            : m,
-        ),
-      );
     } finally {
       setCheckingId((current) => (current === id ? null : current));
     }
-  }, []);
+  }, [applyResult]);
+
+  /**
+   * One automatic monitoring round: check every known monitor in order,
+   * updating each card as its result arrives. Skips the round while a
+   * manual check is in progress and never overlaps with another round.
+   */
+  const runAutoChecks = useCallback(async () => {
+    if (autoRunInFlightRef.current) return;
+    if (checkingIdRef.current !== null) return;
+    const snapshot = monitorsRef.current;
+    if (snapshot.length === 0) return;
+
+    autoRunInFlightRef.current = true;
+    setAutoChecking(true);
+    try {
+      for (const monitor of snapshot) {
+        // Stop the round if the user started a manual check meanwhile.
+        if (checkingIdRef.current !== null) break;
+        // Skip monitors deleted since the round started.
+        if (!monitorsRef.current.some((m) => m.id === monitor.id)) continue;
+        try {
+          const result = await runCheckRequest(monitor.id);
+          if (result) {
+            applyResult(monitor.id, result);
+          }
+        } catch (e) {
+          // Keep the last known status; the next round retries.
+          console.warn(`Automatic check failed for monitor ${monitor.id}:`, e);
+        }
+      }
+      setLastAutoCheckAt(new Date().toISOString());
+    } finally {
+      autoRunInFlightRef.current = false;
+      setAutoChecking(false);
+    }
+  }, [applyResult]);
+
+  // Automatic monitoring: poll every configured interval while the app
+  // is open so production dashboards keep recording real checks.
+  const autoEnabled = monitoringSettings.autoCheckEnabled;
+  const intervalSeconds = monitoringSettings.checkIntervalSeconds;
+  useEffect(() => {
+    if (!autoEnabled) return;
+    const intervalMs = Math.max(15, intervalSeconds) * 1000;
+    const timer = window.setInterval(() => {
+      void runAutoChecks();
+    }, intervalMs);
+    return () => window.clearInterval(timer);
+  }, [autoEnabled, intervalSeconds, runAutoChecks]);
 
   const value = useMemo(
     () => ({
@@ -184,11 +286,27 @@ export const MonitorsProvider = ({ children }: { children: ReactNode }) => {
       loading,
       loadError,
       checkingId,
+      autoChecking,
+      lastAutoCheckAt,
+      monitoringSettings,
       addMonitor,
       deleteMonitor,
       checkMonitor,
+      refreshMonitors: loadMonitors,
     }),
-    [monitors, loading, loadError, checkingId, addMonitor, deleteMonitor, checkMonitor],
+    [
+      monitors,
+      loading,
+      loadError,
+      checkingId,
+      autoChecking,
+      lastAutoCheckAt,
+      monitoringSettings,
+      addMonitor,
+      deleteMonitor,
+      checkMonitor,
+      loadMonitors,
+    ],
   );
 
   return (

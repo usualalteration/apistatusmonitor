@@ -51,9 +51,15 @@ a check to start collecting metrics" rather than a blank panel.
 
 ## Settings
 
-Application preferences: check interval, notification toggle, and light/dark
-appearance. These are local UI preferences — checks are run on demand from the
-monitor cards; there is no scheduler polling in the background yet.
+Application preferences: an **automatic monitoring** toggle, the **check
+interval** (30s / 60s / 2m / 5m), a notification toggle, and light/dark
+appearance. Monitoring preferences are saved in the browser and apply
+whenever the app is open: every monitored website is checked automatically
+on the chosen interval, in addition to the on-demand Check Now button.
+Every automatic check is a real HTTP request recorded like a manual one, so
+statuses, response times, charts and recent failures keep updating while
+the dashboard is open. The Monitors and Dashboard pages show the live
+auto-check state (interval, round in progress, last round time).
 
 ## How it is put together
 

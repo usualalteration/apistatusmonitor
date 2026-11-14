@@ -1,4 +1,4 @@
-import { Activity, AlertCircle, Loader2 } from "lucide-react";
+import { Activity, AlertCircle, Loader2, RefreshCw } from "lucide-react";
 import { useMonitors } from "@/contexts/MonitorsContext";
 import MonitorForm from "@/components/monitors/MonitorForm";
 import MonitorCard from "@/components/monitors/MonitorCard";
@@ -9,6 +9,8 @@ const Monitors = () => {
     loading,
     loadError,
     checkingId,
+    autoChecking,
+    monitoringSettings,
     addMonitor,
     deleteMonitor,
     checkMonitor,
@@ -65,6 +67,16 @@ const Monitors = () => {
               {monitors.length}{" "}
               {monitors.length === 1 ? "monitor" : "monitors"}
             </h2>
+            {monitoringSettings.autoCheckEnabled && (
+              <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+                <RefreshCw
+                  className={`h-3.5 w-3.5 ${autoChecking ? "animate-spin text-primary" : ""}`}
+                />
+                {autoChecking
+                  ? "Checking all websites…"
+                  : `Auto-check every ${monitoringSettings.checkIntervalSeconds}s`}
+              </span>
+            )}
           </div>
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
             {monitors.map((monitor) => (
