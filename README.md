@@ -67,23 +67,25 @@ The interface is a React and TypeScript single-page app (Vite, Tailwind CSS)
 with a sidebar navigation across Dashboard, Monitors and Settings, and a
 responsive layout that collapses on small screens.
 
-Behind it runs a Python API on Apache OpenServerless, backed by three stores,
-each doing what it is good at:
+Behind it runs a Python API on Apache OpenServerless, backed by two stores,
+each doing what it is good at — **PostgreSQL** for durable data and
+**Redis** for the latest-status cache. MongoDB is not used.
 
 | Endpoint | Does |
 |---|---|
 | `GET/POST/DELETE /api/my/v1/monitors` | list, create and delete monitors |
-| `POST /api/my/v1/check` | run a real HTTP check and record the result |
-| `GET /api/my/v1/history` | a monitor's check history, or recent failures across all monitors |
+| `POST /api/my/v1/website-check` | run a real HTTP check and record the result |
+| `GET /api/my/v1/check-history` | a monitor's check history, or recent failures across all monitors |
 
 A check issues an HTTP GET with a 10-second timeout, treats any 2xx or 3xx as
 online, captures the failure reason otherwise (`HTTP 503`, a DNS or connection
 error), and measures elapsed time in milliseconds. The result is written to
 **PostgreSQL** as the monitor's current state, cached in **Redis** for an hour,
-and appended to **MongoDB** as a history record. History is best-effort: if it
-can't be written, the live status still stands.
+and appended to the **PostgreSQL** `check_history` table as a history record.
+History is best-effort: if it can't be written, the live status still stands.
 
 Two idempotent setup actions prepare the stores — `setup/database` creates the
-`monitors` table, `setup/history` creates the index on the `check_history`
-collection that makes per-monitor and recent-failure lookups fast.
+`monitors` and `check_history` tables (plus the indexes that make per-monitor
+and recent-failure lookups fast), and `setup/history` verifies the history
+storage is ready.
 

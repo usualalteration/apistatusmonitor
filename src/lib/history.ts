@@ -29,7 +29,7 @@ export async function fetchMonitorHistory(
   limit = 50,
 ): Promise<HistoryRecord[]> {
   const raw = await apiFetchJSON(
-    `/api/my/v1/history?monitor_id=${monitorId}&limit=${limit}`,
+    `/api/my/v1/check-history?monitor_id=${monitorId}&limit=${limit}`,
   );
   const data = unwrap(raw);
   if (!data || data.ok === false) {
@@ -43,7 +43,7 @@ export async function fetchRecentFailures(
   limit = 5,
 ): Promise<HistoryRecord[]> {
   const raw = await apiFetchJSON(
-    `/api/my/v1/history?recent=failures&limit=${limit}`,
+    `/api/my/v1/check-history?recent=failures&limit=${limit}`,
   );
   const data = unwrap(raw);
   if (!data || data.ok === false) {

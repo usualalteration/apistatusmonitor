@@ -46,9 +46,21 @@ const hasPendingError = (payload: unknown): boolean => {
   );
 };
 
-/** True when the response is the controller's "activation still running" envelope. */
-const isPendingResponse = (status: number, payload: unknown): boolean =>
-  status === 202 || hasPendingError(payload);
+/** Gateway statuses that mean "the backend could not answer in time". */
+const GATEWAY_STATUSES = new Set([502, 503, 504]);
+
+/**
+ * True when the response should be retried instead of surfaced:
+ * the controller's "activation still running" envelope (202 or the
+ * pending-error body), gateway timeouts, or a body that is not JSON
+ * at all (proxy cut-offs and error pages). Real application errors
+ * arrive as JSON and are never retried.
+ */
+const isRetryableResponse = (status: number, payload: unknown): boolean =>
+  status === 202 ||
+  hasPendingError(payload) ||
+  GATEWAY_STATUSES.has(status) ||
+  payload === null;
 
 const parseBody = async (response: Response): Promise<unknown> => {
   const text = (await response.text()).trim();
@@ -81,22 +93,18 @@ export async function apiFetchJSON(
     const response = await fetch(url, { method, headers, body });
     const payload = await parseBody(response);
 
-    if (isPendingResponse(response.status, payload)) {
+    if (isRetryableResponse(response.status, payload)) {
       if (attempt >= retries) {
+        if (response.status === 202 || hasPendingError(payload)) {
+          throw new ApiPendingError(
+            "The backend is still starting up. Please try again in a moment.",
+          );
+        }
+        // Gateway cut-offs: the activation may still complete in the
+        // background, so callers treat this like the pending case.
         throw new ApiPendingError(
-          "The backend is still starting up. Please try again in a moment.",
+          `The request could not be confirmed (HTTP ${response.status}). It may still complete in the background — please check again shortly.`,
         );
-      }
-      await sleep(delay);
-      delay *= 2;
-      continue;
-    }
-
-    // A 200 with an empty or non-JSON body is a broken proxy response,
-    // not an application payload — retry it as well.
-    if (response.ok && payload === null) {
-      if (attempt >= retries) {
-        throw new Error(`Request failed: ${response.status}`);
       }
       await sleep(delay);
       delay *= 2;

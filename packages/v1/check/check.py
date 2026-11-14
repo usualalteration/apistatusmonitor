@@ -125,16 +125,25 @@ def cache_result(ctx, monitor_id, payload):
         pass
 
 
-def insert_history(ctx, record):
-    db = getattr(ctx, "MONGODB", None)
-    if db is None:
-        return
+def insert_history(conn, monitor_id, timestamp, status, response_time_ms, error, url):
+    """Append the check result to the PostgreSQL history table (best-effort)."""
     try:
-        db["check_history"].insert_one(record)
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO check_history "
+                "(monitor_id, timestamp, status, response_time, error, url) "
+                "VALUES (%s, %s, %s, %s, %s, %s)",
+                (monitor_id, timestamp, status, response_time_ms, error, url),
+            )
+        conn.commit()
     except Exception:
         # History is best-effort relative to the live status result; the
-        # PostgreSQL row and Redis cache remain authoritative for current state.
-        pass
+        # PostgreSQL row and Redis cache remain authoritative for current
+        # state.
+        try:
+            conn.rollback()
+        except Exception:
+            pass
 
 
 def close_resources(ctx):
@@ -145,7 +154,7 @@ def close_resources(ctx):
     server-side connection open until the container is garbage collected,
     which eventually stalls activations.
     """
-    for name in ("POSTGRESQL", "MONGODB_CLIENT", "REDIS"):
+    for name in ("POSTGRESQL", "REDIS"):
         try:
             client = getattr(ctx, name, None)
             if client is not None:
@@ -202,15 +211,13 @@ def main(args, ctx=None):
                 },
             )
             insert_history(
-                ctx,
-                {
-                    "monitor_id": monitor_id,
-                    "timestamp": timestamp,
-                    "status": status,
-                    "response_time": response_time_ms,
-                    "error": error,
-                    "url": url,
-                },
+                conn,
+                monitor_id,
+                ts_db,
+                status,
+                response_time_ms,
+                error,
+                url,
             )
 
         return {

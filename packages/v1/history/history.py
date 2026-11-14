@@ -7,7 +7,9 @@ GET /api/my/v1/history?monitor_id=<id>&limit=<n>
 GET /api/my/v1/history?recent=failures&limit=<n>
     -> most recent failed checks across all monitors
 
-Each record: {monitorId, timestamp, status, responseTime, error, url}
+History records live in the PostgreSQL `check_history` table (created by
+the idempotent setup actions). Each record:
+{monitorId, timestamp, status, responseTime, error, url}
 """
 
 import json
@@ -24,7 +26,7 @@ def request_data(args):
     merged = dict(body) if isinstance(body, dict) else {}
     ignored = {
         "body",
-        "MONGODB_URI",
+        "POSTGRES_URL",
         "__ow_method",
         "__ow_headers",
         "__ow_path",
@@ -34,42 +36,55 @@ def request_data(args):
     return merged
 
 
-def to_record(doc):
+def format_timestamp(value):
+    if value is None:
+        return None
+    try:
+        return value.isoformat().replace("+00:00", "Z")
+    except Exception:
+        return str(value)
+
+
+def row_to_record(row):
     return {
-        "monitorId": doc.get("monitor_id"),
-        "timestamp": doc.get("timestamp"),
-        "status": doc.get("status"),
-        "responseTime": doc.get("response_time"),
-        "error": doc.get("error"),
-        "url": doc.get("url"),
+        "monitorId": row[1],
+        "timestamp": format_timestamp(row[2]),
+        "status": row[3],
+        "responseTime": row[4],
+        "error": row[5],
+        "url": row[6],
     }
 
 
-def get_monitor_history(db, monitor_id, limit):
-    docs = (
-        db["check_history"]
-        .find({"monitor_id": monitor_id})
-        .sort("timestamp", -1)
-        .limit(limit)
-    )
-    return [to_record(d) for d in docs]
+def get_monitor_history(conn, monitor_id, limit):
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT id, monitor_id, timestamp, status, response_time, error, url "
+            "FROM check_history WHERE monitor_id = %s "
+            "ORDER BY timestamp DESC, id DESC LIMIT %s",
+            (monitor_id, limit),
+        )
+        rows = cur.fetchall()
+    return [row_to_record(r) for r in rows]
 
 
-def get_recent_failures(db, limit):
-    docs = (
-        db["check_history"]
-        .find({"status": "offline"})
-        .sort("timestamp", -1)
-        .limit(limit)
-    )
-    return [to_record(d) for d in docs]
+def get_recent_failures(conn, limit):
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT id, monitor_id, timestamp, status, response_time, error, url "
+            "FROM check_history WHERE status = 'offline' "
+            "ORDER BY timestamp DESC, id DESC LIMIT %s",
+            (limit,),
+        )
+        rows = cur.fetchall()
+    return [row_to_record(r) for r in rows]
 
 
 def main(args, ctx=None):
-    if not ctx or not hasattr(ctx, "MONGODB"):
-        return {"ok": False, "error": "MongoDB not configured"}
+    if not ctx or not hasattr(ctx, "POSTGRESQL"):
+        return {"ok": False, "error": "Database not configured"}
 
-    db = ctx.MONGODB
+    conn = ctx.POSTGRESQL
     try:
         data = request_data(args)
         method = (args.get("__ow_method") or args.get("method") or "GET").upper()
@@ -83,7 +98,7 @@ def main(args, ctx=None):
             limit = 5 if recent == "failures" else 50
 
         if recent == "failures":
-            return {"ok": True, "failures": get_recent_failures(db, limit)}
+            return {"ok": True, "failures": get_recent_failures(conn, limit)}
 
         monitor_id = data.get("monitor_id") or data.get("monitorId") or data.get("id")
         if monitor_id in (None, ""):
@@ -99,15 +114,13 @@ def main(args, ctx=None):
         return {
             "ok": True,
             "monitorId": monitor_id_int,
-            "history": get_monitor_history(db, monitor_id_int, limit),
+            "history": get_monitor_history(conn, monitor_id_int, limit),
         }
     finally:
-        # The generated wrapper opens a fresh MongoClient per invocation and
+        # The generated wrapper opens a fresh connection per invocation and
         # never closes it; release it so server slots are not held until
         # the container is garbage collected.
         try:
-            client = getattr(ctx, "MONGODB_CLIENT", None)
-            if client is not None:
-                client.close()
+            conn.close()
         except Exception:
             pass

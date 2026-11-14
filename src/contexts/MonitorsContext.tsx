@@ -104,7 +104,7 @@ const normalizeResult = (raw: unknown): CheckResult | null => {
 const runCheckRequest = async (
   id: number,
 ): Promise<CheckResult | null> => {
-  const raw = await apiFetchJSON("/api/my/v1/check", {
+  const raw = await apiFetchJSON("/api/my/v1/website-check", {
     method: "POST",
     headers: JSON_HEADERS,
     body: JSON.stringify({ id }),
@@ -316,6 +316,18 @@ export const MonitorsProvider = ({
     }, intervalMs);
     return () => window.clearInterval(timer);
   }, [autoEnabled, intervalSeconds, runAutoChecks]);
+
+  // Warm-up: run one silent round shortly after the app loads so the
+  // backend containers are ready (and statuses current) before the
+  // user clicks anything — a cold backend otherwise stalls the first
+  // request for about a minute.
+  useEffect(() => {
+    if (!autoEnabled) return;
+    const warmup = window.setTimeout(() => {
+      void runAutoChecks();
+    }, 5000);
+    return () => window.clearTimeout(warmup);
+  }, [autoEnabled, runAutoChecks]);
 
   const value = useMemo(
     () => ({
